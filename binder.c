@@ -1,10 +1,17 @@
+#include <ctype.h>
+#include <libevdev/libevdev.h>
+#include <string.h>
 #include <linux/input.h>
 #include <weston.h>
 #include <unistd.h>
 #include <fcntl.h>
 
+
+/**
+ * Much like system(3) but doesn't wait for exit and outputs to /dev/null.
+ */
 static void
-execvp_suppressed(const char *file, char *const argv[])
+system_nowait(const char *file, char *const argv[])
 {
 	int pid = fork();
 
@@ -19,72 +26,117 @@ execvp_suppressed(const char *file, char *const argv[])
 	close(fd);
 
 	execvp(file, argv);
+	exit(1);
+}
+
+
+/**
+ * Parses a key combo to keycode (linux/input-event-codes.h KEY_%) and modifier
+ * (libweston/compositor.h: enum weston_keyboard_modifier).
+ *
+ * Returns -1 on failure, 0 on success.
+ */
+int
+binder_parse_combination(const char *combo, uint32_t *key,
+		enum weston_keyboard_modifier *mod)
+{
+	uint32_t k = 0;
+	enum weston_keyboard_modifier m = 0;
+
+	/*
+	 * The maximum length of a key name is 28:
+	 *
+	 *	grep -o 'KEY_\S\+' linux/input-event-codes.h | wc -L
+	 */
+	char keysym[29];
+	int code;
+
+	const char *i = combo;
+	while (*i) {
+		if (*i == '+')
+			i++;
+
+		const char *start = i;
+		for (; *i && *i != '+'; i++);
+		if (i - start > sizeof(keysym) - sizeof("KEY_"))
+			return -1;
+
+		strcpy(keysym, "KEY_");
+		memcpy(keysym + 4, start, i - start);
+		keysym[4 + i - start] = '\0';
+
+		for (int j = 4; j < i - start + 4; j++)
+			keysym[j] = toupper(keysym[j]);
+
+		if (!strcmp("CTRL", keysym + 4)) {
+			m |= MODIFIER_CTRL;
+		} else if (!strcmp("ALT", keysym + 4)) {
+			m |= MODIFIER_ALT;
+		} else if (!strcmp("SUPER", keysym + 4)) {
+			m |= MODIFIER_SUPER;
+		} else if ((code = libevdev_event_code_from_name(EV_KEY, keysym))) {
+			if (code == -1 || k != 0)
+				return -1;
+
+			k = code;
+		} else  {
+			return -1;
+		}
+	}
+
+	*key = k;
+	*mod = m;
+	return 0;
 }
 
 static void
-binder_callback_alt(struct weston_keyboard *keyboard, unsigned int time, uint32_t key,
+binder_callback(struct weston_keyboard *keyboard, unsigned int time, uint32_t key,
 		void *data)
 {
-	switch (key) {
-
-	/* MPD controls */
-	case KEY_8:
-		execvp_suppressed("mpc", (char * const[]) {"mpc", "prev", NULL});
-		break;
-	case KEY_9:
-		execvp_suppressed("mpc", (char * const[]) {"mpc", "next", NULL});
-		break;
-	case KEY_0:
-		execvp_suppressed("mpc", (char * const[]) {"mpc", "toggle", NULL});
-		break;
-
-	/* Backlight controls */
-	case KEY_F5:
-		execvp_suppressed("sudo", (char * const[]) {"sudo", "sh", "-c",
-				"echo 15 > /sys/class/backlight/intel_backlight/brightness", NULL});
-		break;
-	case KEY_F6:
-		execvp_suppressed("sudo", (char * const[]) {"sudo", "sh", "-c",
-				"echo 900 > /sys/class/backlight/intel_backlight/brightness", NULL});
-		break;
-
-	}
-}
-
-static void
-binder_callback_ctrl_alt(struct weston_keyboard *keyboard, unsigned int time, uint32_t key,
-		void *data)
-{
-	switch (key) {
-
-	/* Open a terminal */
-	case KEY_T:
-		execvp_suppressed("xfce4-terminal", (char * const[]) {"xfce4-terminal", NULL});
-		break;
-
-	}
+	system_nowait("sh", (char * const[]) {"sh", "-c", data, NULL});
 }
 
 static void
 binder_add_bindings(struct weston_compositor *ec)
 {
-	weston_compositor_add_key_binding(ec, KEY_8, MODIFIER_ALT, binder_callback_alt, NULL);
-	weston_compositor_add_key_binding(ec, KEY_9, MODIFIER_ALT, binder_callback_alt, NULL);
-	weston_compositor_add_key_binding(ec, KEY_0, MODIFIER_ALT, binder_callback_alt, NULL);
-	weston_compositor_add_key_binding(ec, KEY_F5, MODIFIER_ALT, binder_callback_alt, NULL);
-	weston_compositor_add_key_binding(ec, KEY_F6, MODIFIER_ALT, binder_callback_alt, NULL);
-	weston_compositor_add_key_binding(ec, KEY_T, MODIFIER_CTRL | MODIFIER_ALT, binder_callback_ctrl_alt, NULL);
+	struct weston_config *config =  wet_get_config(ec);
+	struct weston_config_section *s = NULL;
+	const char *name = NULL;
+	char *exec, *key;
+
+	while (weston_config_next_section(config, &s, &name)) {
+		if (strcmp(name, "keybind"))
+			continue;
+
+		weston_config_section_get_string(s, "key", &key, NULL);
+		weston_config_section_get_string(s, "exec", &exec, NULL);
+
+		if (!key || !exec) {
+			free(key);
+			free(exec);
+
+			weston_log("Ignoring incomplete keybind section.\n");
+			continue;
+		}
+
+		uint32_t k;
+		enum weston_keyboard_modifier m;
+		int code = binder_parse_combination(key, &k, &m);
+
+		if (code == -1) {
+			weston_log("Invalid key for keybind: '%s'.", key);
+			continue;
+		}
+
+		weston_log("Adding keybind %s -> %s\n", key, exec);
+		weston_compositor_add_key_binding(ec, k, m, binder_callback, exec);
+		free(key);
+	}
 }
 
 WL_EXPORT int
 wet_module_init(struct weston_compositor *ec, int *argc, char *argv[])
 {
-	weston_log("Keybinder plugin activated, keybinds:\n");
-	weston_log("  ALT+8: mpc prev\n");
-	weston_log("  ALT+9: mpc next\n");
-	weston_log("  ALT+0: mpc toggle\n");
-	weston_log("  ALT+F5: sudo sh -c 'echo 15 > /sys/class/backlight/intel_backlight/brightness'\n");
-	weston_log("  ALT+F6: sudo sh -c 'echo 900 > /sys/class/backlight/intel_backlight/brightness'\n");
-	weston_log("  CTRL+ALT+T: xfce4-terminal\n");
 	binder_add_bindings(ec);
+	return 0;
 }
