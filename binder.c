@@ -59,7 +59,7 @@ system_nowait(const char *file, char *const argv[])
  *
  * Returns -1 on failure, 0 on success.
  */
-int
+static int
 binder_parse_combination(const char *combo, uint32_t *key,
 		enum weston_keyboard_modifier *mod)
 {
