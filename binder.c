@@ -29,17 +29,16 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-
 /**
  * Much like system(3) but doesn't wait for exit and outputs to /dev/null.
  */
-static void
+static pid_t
 system_nowait(const char *file, char *const argv[])
 {
-	int pid = fork();
+	pid_t pid = fork();
 
 	if (pid)
-		return;
+		return pid;
 
 	int fd = open("/dev/null", O_WRONLY);
 
@@ -112,11 +111,40 @@ binder_parse_combination(const char *combo, uint32_t *key,
 	return 0;
 }
 
+struct binder_process {
+	struct weston_process wp;
+	const char *exec;
+};
+
+void
+process_cleanup(struct weston_process *process, int status)
+{
+	struct binder_process *bp = (struct binder_process *) process;
+
+	if (status) {
+		weston_log("Process executed via keybind failed (exit value %i): %s\n",
+				status, bp->exec);
+	}
+
+	free(process);
+}
+
 static void
 binder_callback(struct weston_keyboard *keyboard, unsigned int time, uint32_t key,
 		void *data)
 {
-	system_nowait("sh", (char * const[]) {"sh", "-c", data, NULL});
+	pid_t spawn = system_nowait("sh", (char * const[]) {"sh", "-c", data, NULL});
+	if (spawn == -1) {
+		weston_log("Failed spawning process %s\n", (char *) data);
+		return;
+	}
+
+	struct binder_process *bp = malloc(sizeof(*bp));
+	bp->wp.pid = spawn;
+	bp->wp.cleanup = process_cleanup;
+
+	bp->exec = (char *) data;
+	weston_watch_process(&bp->wp);
 }
 
 static void
