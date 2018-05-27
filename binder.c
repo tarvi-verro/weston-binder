@@ -130,8 +130,8 @@ process_cleanup(struct weston_process *process, int status)
 }
 
 static void
-binder_callback(struct weston_keyboard *keyboard, unsigned int time, uint32_t key,
-		void *data)
+binder_callback(struct weston_keyboard *keyboard, const struct timespec *time,
+		uint32_t key, void *data)
 {
 	pid_t spawn = system_nowait("sh", (char * const[]) {"sh", "-c", data, NULL});
 	if (spawn == -1) {
