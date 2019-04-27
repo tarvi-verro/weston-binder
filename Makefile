@@ -1,9 +1,13 @@
 
-CFLAGS:=-I/usr/include/libweston-5 -I/usr/include/libevdev-1.0 \
-	-I/usr/include/weston -I/usr/include/pixman-1 \
+WESTON_VERSION=$(shell pkg-config --modversion weston | cut -d '.' -f 1)
+LIBWESTON_MOD=libweston-$(WESTON_VERSION)
+LIBWESTON_LIBPREFIX=$(shell pkg-config --variable=libdir $(LIBWESTON_MOD))
+
+CFLAGS:=$(shell pkg-config --cflags weston $(LIBWESTON_MOD)) \
+	$(shell pkg-config --cflags libevdev) \
 	 -fPIC -Wall
 
-LDFLAGS:=-shared -lweston-5
+LDFLAGS:=-shared $(shell pkg-config --libs $(LIBWESTON_MOD))
 
-binder.so: binder.c Makefile /usr/lib/libweston-5.so
+binder.so: binder.c Makefile $(LIBWESTON_LIBPREFIX)/$(LIBWESTON_MOD).so
 	gcc ${CFLAGS} $< ${LDFLAGS} -o $@
