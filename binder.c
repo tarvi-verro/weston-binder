@@ -24,7 +24,6 @@
 #include <ctype.h>
 #include <libevdev/libevdev.h>
 #include <string.h>
-#include <linux/input.h>
 #include <weston.h>
 #include <unistd.h>
 #include <fcntl.h>
