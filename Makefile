@@ -16,7 +16,7 @@ LDFLAGS:=-shared $(shell pkg-config --libs $(LIBWESTON_MOD))
 all: binder.so
 
 binder.so: binder.c Makefile $(LIBWESTON_LIBPREFIX)/$(LIBWESTON_MOD).so
-	gcc ${CFLAGS} $< ${LDFLAGS} -o $@
+	${CC} ${CFLAGS} $< ${LDFLAGS} -o $@
 
 clean:
 	rm -f binder.so
