@@ -110,19 +110,20 @@ binder_parse_combination(const char *combo, uint32_t *key,
 	return 0;
 }
 
-struct binder_process {
+struct binder_data {
 	struct weston_process wp;
-	const char *exec;
+	struct weston_compositor *compositor;
+	char *command;
 };
 
 void
 process_cleanup(struct weston_process *process, int status)
 {
-	struct binder_process *bp = (struct binder_process *) process;
+	struct binder_data *bd = (struct binder_data *) process;
 
 	if (status) {
 		weston_log("Process executed via keybind failed (exit value %i): %s\n",
-				status, bp->exec);
+				status, bd->command);
 	}
 
 	free(process);
@@ -132,18 +133,21 @@ static void
 binder_callback(struct weston_keyboard *keyboard, const struct timespec *time,
 		uint32_t key, void *data)
 {
-	pid_t spawn = system_nowait("sh", (char * const[]) {"sh", "-c", data, NULL});
+	struct binder_data *bd = data;
+
+	char *command = bd->command;
+	struct weston_compositor *compositor = bd->compositor;
+
+	pid_t spawn = system_nowait("sh", (char * const[]) {"sh", "-c", command, NULL});
 	if (spawn == -1) {
-		weston_log("Failed spawning process %s\n", (char *) data);
-		return;
+        	weston_log("Failed spawning process %s\n", (char *) command);
+        	return;
 	}
 
-	struct binder_process *bp = malloc(sizeof(*bp));
-	bp->wp.pid = spawn;
-	bp->wp.cleanup = process_cleanup;
+	bd->wp.pid = spawn;
+	bd->wp.cleanup = process_cleanup;
 
-	bp->exec = (char *) data;
-	weston_watch_process(&bp->wp);
+	wet_watch_process(compositor, &bd->wp);
 }
 
 static void
@@ -178,8 +182,12 @@ binder_add_bindings(struct weston_compositor *ec)
 			continue;
 		}
 
+		struct binder_data *bd = malloc(sizeof(*bd));
+		bd->command = exec;
+		bd->compositor = ec;
+
 		weston_log("Adding keybind %s -> %s\n", key, exec);
-		weston_compositor_add_key_binding(ec, k, m, binder_callback, exec);
+		weston_compositor_add_key_binding(ec, k, m, binder_callback, bd);
 		free(key);
 	}
 }
